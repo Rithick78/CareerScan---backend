@@ -1,5 +1,6 @@
 package com.project.career_scan.controller;
 
+import com.project.career_scan.config.GuestConfig;
 import com.project.career_scan.dto.LoginRequest;
 import com.project.career_scan.dto.LoginResponse;
 import com.project.career_scan.dto.RegisterRequest;
@@ -33,6 +34,16 @@ public class AuthController {
             @Valid @RequestBody LoginRequest request) {
 
         LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/guest")
+    public ResponseEntity<LoginResponse> guestLogin() {
+        LoginRequest guestRequest = new LoginRequest();
+        guestRequest.setEmail(GuestConfig.GUEST_EMAIL);
+        guestRequest.setPassword(GuestConfig.GUEST_PASSWORD);
+
+        LoginResponse response = authService.login(guestRequest);
         return ResponseEntity.ok(response);
     }
 }

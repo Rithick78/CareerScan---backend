@@ -1,4 +1,4 @@
-# CareerScan — Backend
+# CareerScan
 
 > Spring Boot REST API that powers AI-based job matching using resume parsing,
 > live job search, and skill overlap scoring.
