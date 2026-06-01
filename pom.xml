@@ -86,6 +86,11 @@
 			<artifactId>pdfbox</artifactId>
 			<version>3.0.1</version>
 		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
 		<!--  Test  -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
