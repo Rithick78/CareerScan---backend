@@ -43,14 +43,12 @@ public class JobController {
         return ResponseEntity.ok(response);
     }
 
-    // POST /api/jobs/save/{jobId} — save a job
-    // Frontend sends the full job object in request body
     @PostMapping("/save/{jobId}")
     public ResponseEntity<Map<String, String>> saveJob(
             @RequestBody JobDTO job,
             @AuthenticationPrincipal String email) {
 
-        log.info("Save job requested by: {} for jobId: {}", email, job.getJobId());
+        log.info("Save job: {} by {}", job.getJobId(), email);
         String message = savedJobService.saveJob(job, email);
         return ResponseEntity.ok(Map.of("message", message));
     }
