@@ -13,9 +13,8 @@ public class CorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**")
-                // React dev server runs on 5173
-                .allowedOrigins(allowedOrigin)
+        String[] origins = allowedOrigin.split(",");        registry.addMapping("/api/**")
+                .allowedOrigins(origins)
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
