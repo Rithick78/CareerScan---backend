@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -30,53 +29,45 @@ public class JobSearchService {
     private final MatchScoreService matchScoreService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${jsearch.api.key}")
-    private String jsearchApiKey;
+    @Value("${adzuna.app.id}")
+    private String adzunaAppId;
 
-    @Value("${jsearch.api.url}")
-    private String jsearchApiUrl;
+    @Value("${adzuna.app.key}")
+    private String adzunaAppKey;
 
-    @Value("${jsearch.api.host}")
-    private String jsearchApiHost;
+    @Value("${adzuna.api.url}")
+    private String adzunaApiUrl;
 
     private static final int MAX_JOBS = 10;
 
+    // ── MAIN METHOD ──────────────────────────────────────────────────────────
     public JobSearchResponse searchJobs(String role, List<String> skills, String city) {
 
         String cleanCity = cleanCity(city);
+        String query     = buildKeywords(role, skills);
 
-        String query = buildSearchQuery(role, skills, cleanCity);
+        log.info("Adzuna search → keywords: '{}', city: '{}'", query, cleanCity);
 
-        log.info("========================================");
-        log.info("JSEARCH CALL");
-        log.info("Original city : {}", city);
-        log.info("Cleaned city  : {}", cleanCity);
-        log.info("Final query   : {}", query);
-        log.info("========================================");
+        // Level 1 — role + skills + city
+        List<JobDTO> rawJobs = callAdzunaApi(query, cleanCity);
 
-        List<JobDTO> rawJobs = callJSearchApi(query);
-
-        // If city-specific query returns 0, try without city
+        // Level 2 — if 0 results, try without city
         if (rawJobs.isEmpty() && !cleanCity.isBlank()) {
-            log.warn("0 jobs with city '{}'. Retrying without city...", cleanCity);
-            String queryWithoutCity = buildSearchQuery(role, skills, "");
-            log.info("Retry query: {}", queryWithoutCity);
-            rawJobs = callJSearchApi(queryWithoutCity);
+            log.warn("0 results with city. Retrying without city...");
+            rawJobs = callAdzunaApi(query, "");
         }
 
-        // If still 0, try role only — broadest possible search
-        if (rawJobs.isEmpty() && role != null && !role.isBlank()) {
-            log.warn("Still 0 jobs. Retrying with role only: {}", role);
-            rawJobs = callJSearchApi(role + " developer India");
+        // Level 3 — if still 0, try role only
+        if (rawJobs.isEmpty()) {
+            log.warn("Still 0 results. Retrying with role only...");
+            rawJobs = callAdzunaApi(role, "");
         }
-
-        log.info("Total raw jobs fetched: {}", rawJobs.size());
 
         if (rawJobs.isEmpty()) {
             return new JobSearchResponse(query, 0, "No jobs found", new ArrayList<>());
         }
 
-        // Apply match scores
+        // Apply match scores to every job
         for (JobDTO job : rawJobs) {
             int score = matchScoreService.calculateMatchScore(skills, job);
             job.setMatchScore(score);
@@ -84,7 +75,7 @@ public class JobSearchService {
             job.setRequiredSkills(matchScoreService.extractSkillsFromJob(job));
         }
 
-        // Sort descending, top 10
+        // Sort by match score descending, take top 10
         List<JobDTO> sorted = rawJobs.stream()
                 .sorted(Comparator.comparingInt(JobDTO::getMatchScore).reversed())
                 .limit(MAX_JOBS)
@@ -93,193 +84,188 @@ public class JobSearchService {
         String summary = buildMatchSummary(sorted);
 
         log.info("Returning {} jobs. Summary: {}", sorted.size(), summary);
-        printRankedJobs(sorted);
 
         return new JobSearchResponse(query, sorted.size(), summary, sorted);
     }
 
+    // ── CLEAN CITY ────────────────────────────────────────────────────────────
+    // "Chennai, Tamil Nadu" → "Chennai"
+    // "Not specified"       → ""
     private String cleanCity(String city) {
-        if (city == null || city.isBlank()) return "";
-        if (city.equalsIgnoreCase("Not specified")) return "";
-        if (city.equalsIgnoreCase("India")) return "";
-
-        // If "Chennai, Tamil Nadu" → take only "Chennai"
-        if (city.contains(",")) {
-            return city.split(",")[0].trim();
-        }
-
+        if (city == null || city.isBlank())              return "";
+        if (city.equalsIgnoreCase("Not specified"))      return "";
+        if (city.equalsIgnoreCase("India"))              return "";
+        if (city.contains(","))                          return city.split(",")[0].trim();
         return city.trim();
     }
-    private String buildSearchQuery(String role, List<String> skills, String city) {
-        StringBuilder q = new StringBuilder();
 
-        // Add role
+    // ── BUILD KEYWORDS ────────────────────────────────────────────────────────
+    // role + top 2 skills only — more keywords = fewer results
+    private String buildKeywords(String role, List<String> skills) {
+        StringBuilder sb = new StringBuilder();
         if (role != null && !role.isBlank()) {
-            q.append(role.trim());
+            sb.append(role.trim());
         }
-
         if (skills != null && !skills.isEmpty()) {
             int limit = Math.min(2, skills.size());
             for (int i = 0; i < limit; i++) {
-                q.append(" ").append(skills.get(i).trim());
+                sb.append(" ").append(skills.get(i).trim());
             }
         }
-
-        if (!city.isBlank()) {
-            q.append(" ").append(city);
-        }
-
-        return q.toString().trim();
+        return sb.toString().trim();
     }
 
-    private List<JobDTO> callJSearchApi(String query) {
-
+    // ── CALL ADZUNA API ───────────────────────────────────────────────────────
+    private List<JobDTO> callAdzunaApi(String keywords, String city) {
         try {
-            String url = UriComponentsBuilder
-                    .fromUriString(jsearchApiUrl)
-                    .queryParam("query", query)
-                    .queryParam("page", "1")
-                    .queryParam("num_pages", "1")
-                    .queryParam("date_posted", "all")
-                    .build()
-                    .toUriString();
+            // 'in' = India country code for Adzuna
+            // Change 'in' to 'gb' for UK, 'us' for USA
+            UriComponentsBuilder builder = UriComponentsBuilder
+                    .fromUriString(adzunaApiUrl + "/in/search/1")
+                    .queryParam("app_id",           adzunaAppId)
+                    .queryParam("app_key",          adzunaAppKey)
+                    .queryParam("results_per_page", 20)
+                    .queryParam("what",             keywords)
+                    .queryParam("content-type",     "application/json");
 
-            log.info("Calling JSearch: {}", url);
+            // Only add where param if city is not empty
+            if (!city.isBlank()) {
+                builder.queryParam("where", city);
+            }
+
+            String url = builder.build().toUriString();
+
+            log.info("Calling Adzuna: {}", url);
 
             HttpHeaders headers = new HttpHeaders();
-            headers.set("X-RapidAPI-Key", jsearchApiKey);
-            headers.set("X-RapidAPI-Host", jsearchApiHost);
             headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
             ResponseEntity<String> response = restTemplate.exchange(
                     url, HttpMethod.GET, request, String.class);
 
             String body = response.getBody();
-
             if (body != null) {
-                log.info("JSearch preview: {}",
+                log.info("Adzuna response preview: {}",
                         body.substring(0, Math.min(300, body.length())));
             }
 
-            return parseJobsFromResponse(body);
+            return parseAdzunaResponse(body);
 
         } catch (ResourceAccessException ex) {
-            log.error("JSearch timeout: {}", ex.getMessage());
+            log.error("Adzuna timeout: {}", ex.getMessage());
             throw new JobSearchException("Job search timed out. Try again.");
 
         } catch (HttpClientErrorException ex) {
-            log.error("JSearch error {}: {}", ex.getStatusCode(),
-                    ex.getResponseBodyAsString());
+            log.error("Adzuna client error {}: {}",
+                    ex.getStatusCode(), ex.getResponseBodyAsString());
+
             if (ex.getStatusCode().value() == 401
                     || ex.getStatusCode().value() == 403) {
                 throw new JobSearchException(
-                        "Invalid RapidAPI key. Check jsearch.api.key in properties.");
+                        "Invalid Adzuna API key. Check adzuna.app.id and adzuna.app.key.");
             }
             if (ex.getStatusCode().value() == 429) {
                 throw new JobSearchException(
-                        "Rate limit hit. Free plan: 500 requests/month.");
+                        "Adzuna rate limit hit. Free tier: 250 requests/day.");
             }
-            throw new JobSearchException("JSearch error: " + ex.getStatusCode());
-
-        } catch (HttpServerErrorException ex) {
-            log.error("JSearch server error: {}", ex.getStatusCode());
-            throw new JobSearchException("JSearch unavailable. Try again.");
+            throw new JobSearchException("Adzuna error: " + ex.getStatusCode());
 
         } catch (JobSearchException ex) {
             throw ex;
 
         } catch (Exception ex) {
-            log.error("Unexpected JSearch error", ex);
+            log.error("Unexpected Adzuna error", ex);
             throw new JobSearchException("Could not fetch jobs: " + ex.getMessage(), ex);
         }
     }
 
-    private List<JobDTO> parseJobsFromResponse(String responseBody) {
-
+    // ── PARSE ADZUNA RESPONSE ─────────────────────────────────────────────────
+    private List<JobDTO> parseAdzunaResponse(String responseBody) {
         List<JobDTO> jobs = new ArrayList<>();
+
         if (responseBody == null || responseBody.isBlank()) return jobs;
 
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode dataArray = root.path("data");
+            JsonNode root    = objectMapper.readTree(responseBody);
+            JsonNode results = root.path("results");
 
-            if (dataArray.isMissingNode() || dataArray.isNull()
-                    || !dataArray.isArray()) {
-                log.warn("No data array in JSearch response");
+            if (results.isMissingNode() || !results.isArray()) {
+                log.warn("No results array in Adzuna response");
                 return jobs;
             }
 
-            log.info("JSearch data array size: {}", dataArray.size());
+            log.info("Adzuna results count: {}", results.size());
 
-            for (JsonNode jobNode : dataArray) {
-                JobDTO job = mapNodeToJobDTO(jobNode);
+            for (JsonNode node : results) {
+                JobDTO job = mapAdzunaNodeToJobDTO(node);
+                // Only add jobs that have an apply link
                 if (job.getApplyLink() != null && !job.getApplyLink().isBlank()) {
                     jobs.add(job);
                 }
             }
 
         } catch (Exception ex) {
-            log.error("Failed to parse JSearch response: {}", ex.getMessage());
+            log.error("Failed to parse Adzuna response: {}", ex.getMessage());
             throw new JobSearchException("Could not read job results.", ex);
         }
 
         return jobs;
     }
 
-    private JobDTO mapNodeToJobDTO(JsonNode node) {
-
+    // ── MAP ADZUNA NODE → JobDTO ──────────────────────────────────────────────
+    private JobDTO mapAdzunaNodeToJobDTO(JsonNode node) {
         JobDTO job = new JobDTO();
-        job.setJobId(safeText(node, "job_id"));
-        job.setTitle(safeText(node, "job_title"));
-        job.setCompany(safeText(node, "employer_name"));
-        job.setEmploymentType(safeText(node, "job_employment_type"));
-        job.setApplyLink(safeText(node, "job_apply_link"));
-        job.setPostedAt(safeText(node, "job_posted_at_datetime_utc"));
 
-        String jobCity    = safeText(node, "job_city");
-        String jobState   = safeText(node, "job_state");
-        String jobCountry = safeText(node, "job_country");
+        // Adzuna uses numeric IDs
+        job.setJobId(node.path("id").asText(""));
+        job.setTitle(node.path("title").asText(""));
 
-        if (!jobCity.isBlank() && !jobState.isBlank()) {
-            job.setLocation(jobCity + ", " + jobState);
-        } else if (!jobCity.isBlank()) {
-            job.setLocation(jobCity + ", " + jobCountry);
-        } else {
-            job.setLocation(jobCountry.isBlank() ? "India" : jobCountry);
-        }
+        // Company is nested: { "display_name": "TCS" }
+        job.setCompany(node.path("company").path("display_name").asText("Unknown"));
 
-        String fullDesc = safeText(node, "job_description");
-        job.setDescription(fullDesc.length() > 300
-                ? fullDesc.substring(0, 300) + "..." : fullDesc);
+        // Location is nested: { "display_name": "Bengaluru, India" }
+        job.setLocation(node.path("location").path("display_name").asText("India"));
 
-        JsonNode minSal = node.path("job_min_salary");
-        JsonNode maxSal = node.path("job_max_salary");
-        if (!minSal.isNull() && !minSal.isMissingNode()
-                && !maxSal.isNull() && !maxSal.isMissingNode()) {
-            job.setSalary("₹" + minSal.asLong() + " - ₹" + maxSal.asLong());
+        // redirect_url is the apply link
+        job.setApplyLink(node.path("redirect_url").asText(""));
+
+        // Adzuna does not always have employment type
+        job.setEmploymentType("FULLTIME");
+
+        // Posted date
+        job.setPostedAt(node.path("created").asText(""));
+
+        // Description — trim to 300 chars
+        String desc = node.path("description").asText("");
+        job.setDescription(desc.length() > 300
+                ? desc.substring(0, 300) + "..." : desc);
+
+        // Salary — Adzuna gives min and max separately
+        double minSal = node.path("salary_min").asDouble(0);
+        double maxSal = node.path("salary_max").asDouble(0);
+        if (minSal > 0 && maxSal > 0) {
+            job.setSalary("₹" + (long) minSal + " - ₹" + (long) maxSal);
+        } else if (minSal > 0) {
+            job.setSalary("From ₹" + (long) minSal);
         } else {
             job.setSalary("Not specified");
         }
 
+        // Match score starts at 0 — calculated after this
         job.setMatchScore(0);
+
         return job;
     }
 
-    private String safeText(JsonNode node, String field) {
-        JsonNode v = node.path(field);
-        if (v.isNull() || v.isMissingNode()) return "";
-        return v.asText("").trim();
-    }
-
+    // ── BUILD MATCH SUMMARY ───────────────────────────────────────────────────
     private String buildMatchSummary(List<JobDTO> jobs) {
-        long excellent = jobs.stream().filter(j -> j.getMatchScore() >= 80).count();
-        long good      = jobs.stream().filter(j -> j.getMatchScore() >= 60
-                && j.getMatchScore() < 80).count();
-        long fair      = jobs.stream().filter(j -> j.getMatchScore() >= 40
-                && j.getMatchScore() < 60).count();
-        long low       = jobs.stream().filter(j -> j.getMatchScore() < 40).count();
+        long excellent = jobs.stream().filter(j -> j.getMatchScore() >= 75).count();
+        long good      = jobs.stream().filter(j -> j.getMatchScore() >= 50
+                && j.getMatchScore() < 75).count();
+        long fair      = jobs.stream().filter(j -> j.getMatchScore() >= 25
+                && j.getMatchScore() < 50).count();
+        long low       = jobs.stream().filter(j -> j.getMatchScore() < 25).count();
 
         StringBuilder s = new StringBuilder();
         if (excellent > 0) s.append(excellent).append(" excellent, ");
@@ -289,17 +275,4 @@ public class JobSearchService {
         s.append("match(es) found");
         return s.toString();
     }
-
-    private void printRankedJobs(List<JobDTO> jobs) {
-        log.info("=== RANKED JOBS ===");
-        for (int i = 0; i < jobs.size(); i++) {
-            JobDTO j = jobs.get(i);
-            log.info("#{} [{}%] {} | {} | {}",
-                    i + 1, j.getMatchScore(), j.getTitle(),
-                    j.getCompany(), j.getLocation());
-        }
-        log.info("=== END ===");
-    }
 }
-
-
