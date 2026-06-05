@@ -72,19 +72,6 @@ public class JobSearchService {
 
         List<JobDTO> rawJobs = new ArrayList<>();
 
-        // SerpApi
-        log.info("Trying Source 1: SerpApi...");
-        try {
-            rawJobs = callSerpApi(keywords, cleanCity);
-            if (!rawJobs.isEmpty()) {
-                log.info("SerpApi returned {} jobs. Using SerpApi.", rawJobs.size());
-            } else {
-                log.warn("SerpApi returned 0 jobs. Trying next source...");
-            }
-        } catch (Exception ex) {
-            log.warn("SerpApi failed: {}. Trying next source...", ex.getMessage());
-        }
-
         // JSearch
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 2: JSearch...");
@@ -99,6 +86,20 @@ public class JobSearchService {
                 log.warn("JSearch failed: {}. Trying next source...", ex.getMessage());
             }
         }
+
+        // SerpApi
+        log.info("Trying Source 1: SerpApi...");
+        try {
+            rawJobs = callSerpApi(keywords, cleanCity);
+            if (!rawJobs.isEmpty()) {
+                log.info("SerpApi returned {} jobs. Using SerpApi.", rawJobs.size());
+            } else {
+                log.warn("SerpApi returned 0 jobs. Trying next source...");
+            }
+        } catch (Exception ex) {
+            log.warn("SerpApi failed: {}. Trying next source...", ex.getMessage());
+        }
+
 
         // Adzuna
         if (rawJobs.isEmpty()) {
