@@ -160,6 +160,82 @@ public class JobSearchService {
         return new JobSearchResponse(keywords, sorted.size(), summary, sorted);
     }
 
+    //  JSEARCH via RapidAPI
+    private List<JobDTO> callJSearchApi(String keywords, String city) {
+
+        String query = city.isBlank() ? keywords : keywords + " " + city;
+
+        String url = UriComponentsBuilder
+                .fromUriString(jsearchApiUrl)
+                .queryParam("query",       query)
+                .queryParam("page",        "1")
+                .queryParam("num_pages",   "1")
+                .queryParam("date_posted", "all")
+                .build()
+                .toUriString();
+
+        log.info("JSearch URL: {}", url);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-RapidAPI-Key",  jsearchApiKey);
+        headers.set("X-RapidAPI-Host", jsearchApiHost);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                url, HttpMethod.GET,
+                new HttpEntity<>(headers), String.class);
+
+        return parseJSearchResponse(response.getBody());
+    }
+
+    private List<JobDTO> parseJSearchResponse(String body) {
+        List<JobDTO> jobs = new ArrayList<>();
+        if (body == null || body.isBlank()) return jobs;
+
+        try {
+            JsonNode root      = objectMapper.readTree(body);
+            JsonNode dataArray = root.path("data");
+            if (!dataArray.isArray()) return jobs;
+
+            log.info("JSearch raw results: {}", dataArray.size());
+
+            for (JsonNode node : dataArray) {
+                JobDTO job = new JobDTO();
+                job.setJobId("js-" + node.path("job_id").asText(""));
+                job.setTitle(node.path("job_title").asText(""));
+                job.setCompany(node.path("employer_name").asText(""));
+                job.setEmploymentType(
+                        node.path("job_employment_type").asText("FULLTIME"));
+                job.setApplyLink(node.path("job_apply_link").asText(""));
+                job.setPostedAt(
+                        node.path("job_posted_at_datetime_utc").asText(""));
+
+                String jobCity    = node.path("job_city").asText("");
+                String jobCountry = node.path("job_country").asText("India");
+                job.setLocation(jobCity.isBlank()
+                        ? jobCountry : jobCity + ", " + jobCountry);
+
+                String desc = node.path("job_description").asText("");
+                job.setDescription(desc.length() > 300
+                        ? desc.substring(0, 300) + "..." : desc);
+
+                job.setSalary("Not specified");
+                job.setMatchScore(0);
+
+                if (!job.getTitle().isBlank() && !job.getApplyLink().isBlank()) {
+                    jobs.add(job);
+                }
+            }
+
+        } catch (Exception ex) {
+            log.error("JSearch parse error: {}", ex.getMessage());
+            throw new JobSearchException("JSearch parse failed: " + ex.getMessage());
+        }
+
+        return jobs;
+    }
+
+
     // SERPAPI (Google Jobs)
     private List<JobDTO> callSerpApi(String keywords, String city) {
 
@@ -251,81 +327,6 @@ public class JobSearchService {
         } catch (Exception ex) {
             log.error("SerpApi parse error: {}", ex.getMessage());
             throw new JobSearchException("SerpApi parse failed: " + ex.getMessage());
-        }
-
-        return jobs;
-    }
-
-    //  JSEARCH via RapidAPI
-    private List<JobDTO> callJSearchApi(String keywords, String city) {
-
-        String query = city.isBlank() ? keywords : keywords + " " + city;
-
-        String url = UriComponentsBuilder
-                .fromUriString(jsearchApiUrl)
-                .queryParam("query",       query)
-                .queryParam("page",        "1")
-                .queryParam("num_pages",   "1")
-                .queryParam("date_posted", "all")
-                .build()
-                .toUriString();
-
-        log.info("JSearch URL: {}", url);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-RapidAPI-Key",  jsearchApiKey);
-        headers.set("X-RapidAPI-Host", jsearchApiHost);
-        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                url, HttpMethod.GET,
-                new HttpEntity<>(headers), String.class);
-
-        return parseJSearchResponse(response.getBody());
-    }
-
-    private List<JobDTO> parseJSearchResponse(String body) {
-        List<JobDTO> jobs = new ArrayList<>();
-        if (body == null || body.isBlank()) return jobs;
-
-        try {
-            JsonNode root      = objectMapper.readTree(body);
-            JsonNode dataArray = root.path("data");
-            if (!dataArray.isArray()) return jobs;
-
-            log.info("JSearch raw results: {}", dataArray.size());
-
-            for (JsonNode node : dataArray) {
-                JobDTO job = new JobDTO();
-                job.setJobId("js-" + node.path("job_id").asText(""));
-                job.setTitle(node.path("job_title").asText(""));
-                job.setCompany(node.path("employer_name").asText(""));
-                job.setEmploymentType(
-                        node.path("job_employment_type").asText("FULLTIME"));
-                job.setApplyLink(node.path("job_apply_link").asText(""));
-                job.setPostedAt(
-                        node.path("job_posted_at_datetime_utc").asText(""));
-
-                String jobCity    = node.path("job_city").asText("");
-                String jobCountry = node.path("job_country").asText("India");
-                job.setLocation(jobCity.isBlank()
-                        ? jobCountry : jobCity + ", " + jobCountry);
-
-                String desc = node.path("job_description").asText("");
-                job.setDescription(desc.length() > 300
-                        ? desc.substring(0, 300) + "..." : desc);
-
-                job.setSalary("Not specified");
-                job.setMatchScore(0);
-
-                if (!job.getTitle().isBlank() && !job.getApplyLink().isBlank()) {
-                    jobs.add(job);
-                }
-            }
-
-        } catch (Exception ex) {
-            log.error("JSearch parse error: {}", ex.getMessage());
-            throw new JobSearchException("JSearch parse failed: " + ex.getMessage());
         }
 
         return jobs;
