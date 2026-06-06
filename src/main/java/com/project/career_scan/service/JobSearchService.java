@@ -71,7 +71,7 @@ public class JobSearchService {
 
         List<JobDTO> rawJobs = new ArrayList<>();
 
-        // ── STEP 1: Try JSearch first ─────────────────────────────────────────
+        // JSearch
         log.info("Trying Source 1: JSearch...");
         try {
             rawJobs = callJSearchApi(keywords, cleanCity);
@@ -84,7 +84,7 @@ public class JobSearchService {
             log.warn("JSearch failed: {}. Trying next source...", ex.getMessage());
         }
 
-        // ── STEP 2: Try SerpApi if JSearch failed or returned 0 ──────────────
+        // SerpApi
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 2: SerpApi...");
             try {
@@ -99,7 +99,7 @@ public class JobSearchService {
             }
         }
 
-        // ── STEP 3: Try Adzuna if SerpApi failed or returned 0 ───────────────
+        //  Adzuna
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 3: Adzuna...");
             try {
@@ -114,7 +114,7 @@ public class JobSearchService {
             }
         }
 
-        // ── STEP 4: Try Arbeitnow as last resort (always free, no key) ───────
+        //  Arbeitnow
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 4: Arbeitnow (last resort)...");
             try {
@@ -129,14 +129,13 @@ public class JobSearchService {
             }
         }
 
-        // ── All sources failed ────────────────────────────────────────────────
         if (rawJobs.isEmpty()) {
             log.error("All 4 sources failed or returned 0 jobs.");
             return new JobSearchResponse(
                     keywords, 0, "No jobs found", new ArrayList<>());
         }
 
-        // ── Score every job ───────────────────────────────────────────────────
+        //  Score every job
         for (JobDTO job : rawJobs) {
             int score = matchScoreService.calculateMatchScore(skills, job);
             job.setMatchScore(score);
