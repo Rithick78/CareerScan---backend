@@ -58,7 +58,6 @@ public class JobSearchService {
 
     private static final int MAX_JOBS = 10;
 
-    // Fallback chain: SerpApi → JSearch → Adzuna → Arbeitnow
     public JobSearchResponse searchJobs(String role, List<String> skills, String city) {
 
         String cleanCity = cleanCity(city);
@@ -72,36 +71,35 @@ public class JobSearchService {
 
         List<JobDTO> rawJobs = new ArrayList<>();
 
-        // JSearch
-        if (rawJobs.isEmpty()) {
-            log.info("Trying Source 2: JSearch...");
-            try {
-                rawJobs = callJSearchApi(keywords, cleanCity);
-                if (!rawJobs.isEmpty()) {
-                    log.info("JSearch returned {} jobs. Using JSearch.", rawJobs.size());
-                } else {
-                    log.warn("JSearch returned 0 jobs. Trying next source...");
-                }
-            } catch (Exception ex) {
-                log.warn("JSearch failed: {}. Trying next source...", ex.getMessage());
-            }
-        }
-
-        // SerpApi
-        log.info("Trying Source 1: SerpApi...");
+        // ── STEP 1: Try JSearch first ─────────────────────────────────────────
+        log.info("Trying Source 1: JSearch...");
         try {
-            rawJobs = callSerpApi(keywords, cleanCity);
+            rawJobs = callJSearchApi(keywords, cleanCity);
             if (!rawJobs.isEmpty()) {
-                log.info("SerpApi returned {} jobs. Using SerpApi.", rawJobs.size());
+                log.info("JSearch returned {} jobs. Using JSearch.", rawJobs.size());
             } else {
-                log.warn("SerpApi returned 0 jobs. Trying next source...");
+                log.warn("JSearch returned 0 jobs. Trying next source...");
             }
         } catch (Exception ex) {
-            log.warn("SerpApi failed: {}. Trying next source...", ex.getMessage());
+            log.warn("JSearch failed: {}. Trying next source...", ex.getMessage());
         }
 
+        // ── STEP 2: Try SerpApi if JSearch failed or returned 0 ──────────────
+        if (rawJobs.isEmpty()) {
+            log.info("Trying Source 2: SerpApi...");
+            try {
+                rawJobs = callSerpApi(keywords, cleanCity);
+                if (!rawJobs.isEmpty()) {
+                    log.info("SerpApi returned {} jobs. Using SerpApi.", rawJobs.size());
+                } else {
+                    log.warn("SerpApi returned 0 jobs. Trying next source...");
+                }
+            } catch (Exception ex) {
+                log.warn("SerpApi failed: {}. Trying next source...", ex.getMessage());
+            }
+        }
 
-        // Adzuna
+        // ── STEP 3: Try Adzuna if SerpApi failed or returned 0 ───────────────
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 3: Adzuna...");
             try {
@@ -116,7 +114,7 @@ public class JobSearchService {
             }
         }
 
-        //  Arbeitnow
+        // ── STEP 4: Try Arbeitnow as last resort (always free, no key) ───────
         if (rawJobs.isEmpty()) {
             log.info("Trying Source 4: Arbeitnow (last resort)...");
             try {
@@ -131,14 +129,14 @@ public class JobSearchService {
             }
         }
 
-        // All sources failed
+        // ── All sources failed ────────────────────────────────────────────────
         if (rawJobs.isEmpty()) {
             log.error("All 4 sources failed or returned 0 jobs.");
             return new JobSearchResponse(
                     keywords, 0, "No jobs found", new ArrayList<>());
         }
 
-        // Score every job
+        // ── Score every job ───────────────────────────────────────────────────
         for (JobDTO job : rawJobs) {
             int score = matchScoreService.calculateMatchScore(skills, job);
             job.setMatchScore(score);
@@ -146,7 +144,7 @@ public class JobSearchService {
             job.setRequiredSkills(matchScoreService.extractSkillsFromJob(job));
         }
 
-        // Sort by score descending, return top 10
+        // ── Sort by score descending, return top 10 ───────────────────────────
         List<JobDTO> sorted = rawJobs.stream()
                 .sorted(Comparator.comparingInt(JobDTO::getMatchScore).reversed())
                 .limit(MAX_JOBS)
