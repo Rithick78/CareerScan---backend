@@ -31,6 +31,10 @@ public class SavedJobService {
     // Save a job for the logged-in user
     public String saveJob(JobDTO job, String userEmail) {
 
+        String safeJobId = job.getJobId() != null && job.getJobId().length() > 100
+                ? job.getJobId().substring(0, 100)
+                : job.getJobId();
+
         // Don't save duplicates
         if (savedJobRepository.existsByUserEmailAndJobId(userEmail, job.getJobId())) {
             return "Job already saved";
@@ -38,7 +42,7 @@ public class SavedJobService {
 
         SavedJob savedJob = new SavedJob();
         savedJob.setUserEmail(userEmail);
-        savedJob.setJobId(job.getJobId());
+        savedJob.setJobId(safeJobId);
         savedJob.setTitle(job.getTitle());
         savedJob.setCompany(job.getCompany());
         savedJob.setLocation(job.getLocation());

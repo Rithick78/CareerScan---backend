@@ -143,7 +143,7 @@ public class JobSearchService {
             job.setRequiredSkills(matchScoreService.extractSkillsFromJob(job));
         }
 
-        // ── Sort by score descending, return top 10 ───────────────────────────
+        // Sort by score descending, return top 10
         List<JobDTO> sorted = rawJobs.stream()
                 .sorted(Comparator.comparingInt(JobDTO::getMatchScore).reversed())
                 .limit(MAX_JOBS)
@@ -284,8 +284,12 @@ public class JobSearchService {
             for (JsonNode node : jobsArray) {
                 JobDTO job = new JobDTO();
 
-                job.setJobId("serp-" + node.path("job_id").asText(
-                        String.valueOf(System.currentTimeMillis())));
+                String rawId = node.path("job_id").asText(
+                        String.valueOf(System.currentTimeMillis()));
+                String shortId = rawId.length() > 20
+                        ? rawId.substring(0, 20)
+                        : rawId;
+                job.setJobId("serp-" + shortId);
                 job.setTitle(node.path("title").asText(""));
                 job.setCompany(node.path("company_name").asText(""));
                 job.setLocation(node.path("location").asText("India"));

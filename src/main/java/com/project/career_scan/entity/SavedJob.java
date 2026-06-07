@@ -20,7 +20,7 @@ public class SavedJob {
     @Column(name = "user_email", nullable = false)
     private String userEmail;
 
-    @Column(name = "job_id")
+    @Column(name = "job_id", length = 100)
     private String jobId;
 
     @Column(name = "title")
