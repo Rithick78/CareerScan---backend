@@ -60,5 +60,5 @@ Step 5 — JobSearchService (GET /api/jobs)
 | **Database** | MySQL + Spring Data JPA | 8.x |
 | **AI Parsing** | Groq API (LLaMA) | — |
 | **PDF Extraction** | Apache PDFBox | 3.x |
-| **Job Search** | JSearch API (RapidAPI) | — |
+| **Job Search** | Implemented 4-API fallback chain (JSearch → SerpApi → Adzuna → Arbeitnow) | — |
 | **Build Tools** | Maven + Vite | — |
