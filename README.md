@@ -65,13 +65,13 @@ Step 5 — JobSearchService (GET /api/jobs)
 
 ## 📸 Screenshots
 
-| Entry                       | Dashboard                           |
-|-----------------------------|-------------------------------------|
-| ![Entry](uploads/entry.png) | ![Dashboard](uploads/dashboard.png) |
+| Entry                       | Dashboard                    |
+|-----------------------------|------------------------------|
+| ![Entry](src/main/resources/static/entry.png) | ![Dashboard](src/main/resources/static/dashboard.png) |
 
 | Find Jobs | Saved Jobs |
 |---|---|
-| ![Find Jobs](uploads/findjob.png) | ![Saved Jobs](uploads/save.png) |
+| ![Find Jobs](src/main/resources/static/findjob.png) | ![Saved Jobs](src/main/resources/static/save.png) |
 
 ## 📬 Contact
 
