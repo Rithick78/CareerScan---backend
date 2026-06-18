@@ -49,11 +49,14 @@ public class MatchScoreService {
 
         String jobText = buildJobSearchText(job);
 
-        List<String> matchedSkills = new ArrayList<>();
+        List<String> matchedSkills   = new ArrayList<>();
         List<String> unmatchedSkills = new ArrayList<>();
 
         for (String skill : resumeLower) {
-            if (jobText.contains(skill)) {
+            boolean matched = jobText.contains(skill) ||
+                    KNOWN_TECH_KEYWORDS.stream()
+                            .anyMatch(k -> k.contains(skill) && jobText.contains(k));
+            if (matched) {
                 matchedSkills.add(skill);
             } else {
                 unmatchedSkills.add(skill);
@@ -64,37 +67,40 @@ public class MatchScoreService {
 
         double titleBonus = calculateTitleBonus(job.getTitle(), resumeSkills);
 
-        int finalScore = (int) Math.min(100, Math.round(baseScore + titleBonus));
+        double descBonus = 0;
+        if (matchedSkills.size() >= 3) descBonus = 10;
+
+        int finalScore = (int) Math.min(100, Math.round(baseScore + titleBonus + descBonus));
 
         log.debug("Match score for '{}' at '{}': {}% " +
-                        "(matched={}, unmatched={}, titleBonus={})",
+                        "(matched={}, unmatched={}, titleBonus={}, descBonus={})",
                 job.getTitle(), job.getCompany(),
-                finalScore, matchedSkills, unmatchedSkills, titleBonus);
+                finalScore, matchedSkills, unmatchedSkills, titleBonus, descBonus);
 
         return finalScore;
     }
 
     private String buildJobSearchText(JobDTO job) {
         StringBuilder sb = new StringBuilder();
-
-        if (job.getTitle() != null)       sb.append(job.getTitle()).append(" ");
-        if (job.getDescription() != null) sb.append(job.getDescription()).append(" ");
-        if (job.getCompany() != null)     sb.append(job.getCompany()).append(" ");
-
+        if (job.getTitle() != null)          sb.append(job.getTitle()).append(" ");
+        if (job.getDescription() != null)    sb.append(job.getDescription()).append(" ");
+        if (job.getCompany() != null)        sb.append(job.getCompany()).append(" ");
+        if (job.getRequiredSkills() != null) sb.append(String.join(" ", job.getRequiredSkills())).append(" ");
+        if (job.getTitle() != null)          sb.append(job.getTitle()).append(" ")
+                .append(job.getTitle()).append(" ");
         return sb.toString().toLowerCase();
     }
 
     private double calculateTitleBonus(String jobTitle, List<String> resumeSkills) {
         if (jobTitle == null || resumeSkills == null) return 0;
-
         String titleLower = jobTitle.toLowerCase();
-
+        int bonusCount = 0;
         for (String skill : resumeSkills) {
             if (titleLower.contains(skill.toLowerCase())) {
-                return 10.0;
+                bonusCount++;
             }
         }
-        return 0;
+        return Math.min(20.0, bonusCount * 10.0);
     }
 
     public List<String> extractSkillsFromJob(JobDTO job) {
@@ -119,4 +125,3 @@ public class MatchScoreService {
         return "Low Match";
     }
 }
-

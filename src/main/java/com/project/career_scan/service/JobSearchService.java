@@ -25,14 +25,6 @@ public class JobSearchService {
     private final MatchScoreService matchScoreService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // SerpApi
-    @Value("${serpapi.key}")
-    private String serpapiKey;
-
-    @Value("${serpapi.url}")
-    private String serpapiUrl;
-
-    // JSearch
     @Value("${jsearch.api.key}")
     private String jsearchApiKey;
 
@@ -42,7 +34,6 @@ public class JobSearchService {
     @Value("${jsearch.api.host}")
     private String jsearchApiHost;
 
-    // Adzuna
     @Value("${adzuna.app.id}")
     private String adzunaAppId;
 
@@ -52,7 +43,6 @@ public class JobSearchService {
     @Value("${adzuna.api.url}")
     private String adzunaApiUrl;
 
-    // Arbeitnow
     @Value("${arbeitnow.api.url}")
     private String arbeitnowApiUrl;
 
@@ -71,12 +61,12 @@ public class JobSearchService {
 
         List<JobDTO> rawJobs = new ArrayList<>();
 
-        // JSearch
+        // Source 1: JSearch
         log.info("Trying Source 1: JSearch...");
         try {
             rawJobs = callJSearchApi(keywords, cleanCity);
             if (!rawJobs.isEmpty()) {
-                log.info("JSearch returned {} jobs. Using JSearch.", rawJobs.size());
+                log.info("JSearch returned {} jobs.", rawJobs.size());
             } else {
                 log.warn("JSearch returned 0 jobs. Trying next source...");
             }
@@ -84,28 +74,13 @@ public class JobSearchService {
             log.warn("JSearch failed: {}. Trying next source...", ex.getMessage());
         }
 
-        // SerpApi
+        // Source 2: Adzuna
         if (rawJobs.isEmpty()) {
-            log.info("Trying Source 2: SerpApi...");
-            try {
-                rawJobs = callSerpApi(keywords, cleanCity);
-                if (!rawJobs.isEmpty()) {
-                    log.info("SerpApi returned {} jobs. Using SerpApi.", rawJobs.size());
-                } else {
-                    log.warn("SerpApi returned 0 jobs. Trying next source...");
-                }
-            } catch (Exception ex) {
-                log.warn("SerpApi failed: {}. Trying next source...", ex.getMessage());
-            }
-        }
-
-        //  Adzuna
-        if (rawJobs.isEmpty()) {
-            log.info("Trying Source 3: Adzuna...");
+            log.info("Trying Source 2: Adzuna...");
             try {
                 rawJobs = callAdzunaApi(keywords, cleanCity);
                 if (!rawJobs.isEmpty()) {
-                    log.info("Adzuna returned {} jobs. Using Adzuna.", rawJobs.size());
+                    log.info("Adzuna returned {} jobs.", rawJobs.size());
                 } else {
                     log.warn("Adzuna returned 0 jobs. Trying next source...");
                 }
@@ -114,9 +89,9 @@ public class JobSearchService {
             }
         }
 
-        //  Arbeitnow
+        // Source 3: Arbeitnow
         if (rawJobs.isEmpty()) {
-            log.info("Trying Source 4: Arbeitnow (last resort)...");
+            log.info("Trying Source 3: Arbeitnow (last resort)...");
             try {
                 rawJobs = callArbeitnowApi(keywords);
                 if (!rawJobs.isEmpty()) {
@@ -130,12 +105,11 @@ public class JobSearchService {
         }
 
         if (rawJobs.isEmpty()) {
-            log.error("All 4 sources failed or returned 0 jobs.");
-            return new JobSearchResponse(
-                    keywords, 0, "No jobs found", new ArrayList<>());
+            log.error("All sources failed or returned 0 jobs.");
+            return new JobSearchResponse(keywords, 0, "No jobs found", new ArrayList<>());
         }
 
-        //  Score every job
+        // Score every job
         for (JobDTO job : rawJobs) {
             int score = matchScoreService.calculateMatchScore(skills, job);
             job.setMatchScore(score);
@@ -157,17 +131,20 @@ public class JobSearchService {
         return new JobSearchResponse(keywords, sorted.size(), summary, sorted);
     }
 
-    //  JSEARCH via RapidAPI
+    // JSEARCH
     private List<JobDTO> callJSearchApi(String keywords, String city) {
 
-        String query = city.isBlank() ? keywords : keywords + " " + city;
+        String location = city.isBlank() ? "India" : city + ", India";
+        String query = keywords + " " + location;
 
         String url = UriComponentsBuilder
                 .fromUriString(jsearchApiUrl)
                 .queryParam("query",       query)
                 .queryParam("page",        "1")
                 .queryParam("num_pages",   "1")
-                .queryParam("date_posted", "all")
+                .queryParam("date_posted", "month")
+                .queryParam("country",     "IN")
+                .queryParam("language",    "en")
                 .build()
                 .toUriString();
 
@@ -201,20 +178,21 @@ public class JobSearchService {
                 job.setJobId("js-" + node.path("job_id").asText(""));
                 job.setTitle(node.path("job_title").asText(""));
                 job.setCompany(node.path("employer_name").asText(""));
-                job.setEmploymentType(
-                        node.path("job_employment_type").asText("FULLTIME"));
+                job.setEmploymentType(node.path("job_employment_type").asText("FULLTIME"));
                 job.setApplyLink(node.path("job_apply_link").asText(""));
-                job.setPostedAt(
-                        node.path("job_posted_at_datetime_utc").asText(""));
+                job.setPostedAt(node.path("job_posted_at_datetime_utc").asText(""));
 
                 String jobCity    = node.path("job_city").asText("");
                 String jobCountry = node.path("job_country").asText("India");
-                job.setLocation(jobCity.isBlank()
-                        ? jobCountry : jobCity + ", " + jobCountry);
+                job.setLocation(jobCity.isBlank() ? jobCountry : jobCity + ", " + jobCountry);
 
+                if (!jobCountry.isBlank() &&
+                        !jobCountry.equalsIgnoreCase("India") &&
+                        !jobCountry.equalsIgnoreCase("IN")) {
+                    continue;
+                }
                 String desc = node.path("job_description").asText("");
-                job.setDescription(desc.length() > 300
-                        ? desc.substring(0, 300) + "..." : desc);
+                job.setDescription(desc.length() > 1000 ? desc.substring(0, 1000) + "..." : desc);
 
                 job.setSalary("Not specified");
                 job.setMatchScore(0);
@@ -232,108 +210,7 @@ public class JobSearchService {
         return jobs;
     }
 
-
-    // SERPAPI (Google Jobs)
-    private List<JobDTO> callSerpApi(String keywords, String city) {
-
-        String location = city.isBlank() ? "India" : city + ", India";
-
-        String url = UriComponentsBuilder
-                .fromUriString(serpapiUrl)
-                .queryParam("engine",   "google_jobs")
-                .queryParam("q",        keywords)
-                .queryParam("location", location)
-                .queryParam("api_key",  serpapiKey)
-                .queryParam("hl",       "en")
-                .queryParam("gl",       "in")
-                .build()
-                .toUriString();
-
-        log.info("SerpApi URL: {}", url);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                url, HttpMethod.GET,
-                new HttpEntity<>(headers), String.class);
-
-        return parseSerpApiResponse(response.getBody());
-    }
-
-    private List<JobDTO> parseSerpApiResponse(String body) {
-        List<JobDTO> jobs = new ArrayList<>();
-        if (body == null || body.isBlank()) return jobs;
-
-        try {
-            JsonNode root = objectMapper.readTree(body);
-
-            // SerpApi returns error field when limit exceeded or key invalid
-            if (root.has("error")) {
-                String error = root.path("error").asText();
-                log.warn("SerpApi returned error: {}", error);
-                // Throw so fallback chain catches it
-                throw new JobSearchException("SerpApi error: " + error);
-            }
-
-            JsonNode jobsArray = root.path("jobs_results");
-            if (!jobsArray.isArray()) return jobs;
-
-            log.info("SerpApi raw results: {}", jobsArray.size());
-
-            for (JsonNode node : jobsArray) {
-                JobDTO job = new JobDTO();
-
-                String rawId = node.path("job_id").asText(
-                        String.valueOf(System.currentTimeMillis()));
-                String shortId = rawId.length() > 20
-                        ? rawId.substring(0, 20)
-                        : rawId;
-                job.setJobId("serp-" + shortId);
-                job.setTitle(node.path("title").asText(""));
-                job.setCompany(node.path("company_name").asText(""));
-                job.setLocation(node.path("location").asText("India"));
-                job.setEmploymentType(
-                        node.path("detected_extensions")
-                                .path("schedule_type").asText("FULLTIME"));
-                job.setPostedAt(
-                        node.path("detected_extensions")
-                                .path("posted_at").asText(""));
-
-                // Description
-                String desc = node.path("description").asText("");
-                job.setDescription(desc.length() > 300
-                        ? desc.substring(0, 300) + "..." : desc);
-
-                // Apply link — use first related link
-                JsonNode links = node.path("related_links");
-                if (links.isArray() && links.size() > 0) {
-                    job.setApplyLink(links.get(0).path("link").asText(""));
-                } else {
-                    // Fallback Google search link
-                    job.setApplyLink("https://www.google.com/search?q=" +
-                            job.getTitle().replace(" ", "+") + "+jobs");
-                }
-
-                job.setSalary("Not specified");
-                job.setMatchScore(0);
-
-                if (!job.getTitle().isBlank() && !job.getCompany().isBlank()) {
-                    jobs.add(job);
-                }
-            }
-
-        } catch (JobSearchException ex) {
-            throw ex; // rethrow so fallback chain works
-        } catch (Exception ex) {
-            log.error("SerpApi parse error: {}", ex.getMessage());
-            throw new JobSearchException("SerpApi parse failed: " + ex.getMessage());
-        }
-
-        return jobs;
-    }
-
-    //  ADZUNA
+    // ADZUNA
     private List<JobDTO> callAdzunaApi(String keywords, String city) {
 
         UriComponentsBuilder builder = UriComponentsBuilder
@@ -376,23 +253,18 @@ public class JobSearchService {
                 JobDTO job = new JobDTO();
                 job.setJobId("adzuna-" + node.path("id").asText(""));
                 job.setTitle(node.path("title").asText(""));
-                job.setCompany(node.path("company")
-                        .path("display_name").asText("Unknown"));
-                job.setLocation(node.path("location")
-                        .path("display_name").asText("India"));
+                job.setCompany(node.path("company").path("display_name").asText("Unknown"));
+                job.setLocation(node.path("location").path("display_name").asText("India"));
                 job.setApplyLink(node.path("redirect_url").asText(""));
                 job.setEmploymentType("FULLTIME");
                 job.setPostedAt(node.path("created").asText(""));
 
                 String desc = node.path("description").asText("");
-                job.setDescription(desc.length() > 300
-                        ? desc.substring(0, 300) + "..." : desc);
+                job.setDescription(desc.length() > 1000 ? desc.substring(0, 1000) + "..." : desc);
 
                 double min = node.path("salary_min").asDouble(0);
                 double max = node.path("salary_max").asDouble(0);
-                job.setSalary(min > 0
-                        ? "₹" + (long) min + " - ₹" + (long) max
-                        : "Not specified");
+                job.setSalary(min > 0 ? "₹" + (long) min + " - ₹" + (long) max : "Not specified");
 
                 job.setMatchScore(0);
 
@@ -447,14 +319,12 @@ public class JobSearchService {
                 job.setTitle(node.path("title").asText(""));
                 job.setCompany(node.path("company_name").asText(""));
                 job.setLocation(node.path("location").asText("Remote"));
-                job.setEmploymentType(node.path("job_types")
-                        .path(0).asText("FULLTIME"));
+                job.setEmploymentType(node.path("job_types").path(0).asText("FULLTIME"));
                 job.setApplyLink(node.path("url").asText(""));
                 job.setPostedAt(node.path("created_at").asText(""));
 
                 String desc = node.path("description").asText("");
-                job.setDescription(desc.length() > 300
-                        ? desc.substring(0, 300) + "..." : desc);
+                job.setDescription(desc.length() > 1000 ? desc.substring(0, 1000) + "..." : desc);
 
                 job.setSalary("Not specified");
                 job.setMatchScore(0);
@@ -477,6 +347,7 @@ public class JobSearchService {
         if (city == null || city.isBlank())         return "";
         if (city.equalsIgnoreCase("Not specified")) return "";
         if (city.equalsIgnoreCase("India"))         return "";
+        if (city.equalsIgnoreCase("Remote"))        return "";
         if (city.contains(","))                     return city.split(",")[0].trim();
         return city.trim();
     }
@@ -487,7 +358,7 @@ public class JobSearchService {
             sb.append(role.trim());
         }
         if (skills != null && !skills.isEmpty()) {
-            int limit = Math.min(2, skills.size());
+            int limit = Math.min(4, skills.size());
             for (int i = 0; i < limit; i++) {
                 sb.append(" ").append(skills.get(i).trim());
             }
@@ -496,16 +367,10 @@ public class JobSearchService {
     }
 
     private String buildMatchSummary(List<JobDTO> jobs) {
-        long excellent = jobs.stream()
-                .filter(j -> j.getMatchScore() >= 75).count();
-        long good      = jobs.stream()
-                .filter(j -> j.getMatchScore() >= 50
-                        && j.getMatchScore() < 75).count();
-        long fair      = jobs.stream()
-                .filter(j -> j.getMatchScore() >= 25
-                        && j.getMatchScore() < 50).count();
-        long low       = jobs.stream()
-                .filter(j -> j.getMatchScore() < 25).count();
+        long excellent = jobs.stream().filter(j -> j.getMatchScore() >= 75).count();
+        long good      = jobs.stream().filter(j -> j.getMatchScore() >= 50 && j.getMatchScore() < 75).count();
+        long fair      = jobs.stream().filter(j -> j.getMatchScore() >= 25 && j.getMatchScore() < 50).count();
+        long low       = jobs.stream().filter(j -> j.getMatchScore() < 25).count();
 
         StringBuilder s = new StringBuilder();
         if (excellent > 0) s.append(excellent).append(" excellent, ");
