@@ -4,6 +4,7 @@
 > live job search, and skill overlap scoring.
 
 ---
+[🌐 Live Demo](https://careerscan.netlify.app/) · [📧 Contact](mailto:rithickjacksonv@gmail.com) · [💼 LinkedIn](https://www.linkedin.com/in/rithickjackson/)
 
 ## What is CareerScan?
 
